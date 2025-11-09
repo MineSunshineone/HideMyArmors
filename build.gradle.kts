@@ -14,11 +14,11 @@ repositories {
 }
 dependencies {
     compileOnly("org.spigotmc:spigot-api:1.20-R0.1-SNAPSHOT")
-    compileOnly("com.comphenix.protocol:ProtocolLib:5.2.0-SNAPSHOT")
+    compileOnly("net.dmulloy2:ProtocolLib:5.4.0")
     implementation("de.tr7zw:item-nbt-api:2.13.2")
     implementation("org.jetbrains:annotations:21.0.0")
 }
-val targetJavaVersion = 8
+val targetJavaVersion = 17
 java {
     val javaVersion = JavaVersion.toVersion(targetJavaVersion)
     if (JavaVersion.current() < javaVersion) {

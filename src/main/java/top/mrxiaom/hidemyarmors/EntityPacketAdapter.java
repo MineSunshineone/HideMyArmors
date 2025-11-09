@@ -36,14 +36,14 @@ public class EntityPacketAdapter extends PacketAdapter {
             int entityId = packet.getIntegers().readSafely(0);
             if (entityId == player.getEntityId()) return;
             players.removeIf(it -> it.getEntityId() != entityId);
-            Permissible perm = players.isEmpty() ? null : players.get(0);
+            Player targetPlayer = players.isEmpty() ? null : players.get(0);
 
             if (plugin.newVersion) {
-                ModifierNewPacket.modify(packet, perm, this::modifyItem);
+                ModifierNewPacket.modify(packet, targetPlayer, this::modifyItem);
             } else if (plugin.twoHands) {
-                ModifierOldPacket.modify(packet, perm, this::modifyItem);
+                ModifierOldPacket.modify(packet, targetPlayer, this::modifyItem);
             } else {
-                ModifierVeryOldPacket.modify(packet, perm, this::modifyItem);
+                ModifierVeryOldPacket.modify(packet, targetPlayer, this::modifyItem);
             }
         }
     }
@@ -53,8 +53,8 @@ public class EntityPacketAdapter extends PacketAdapter {
     }
 
     @Nullable
-    private ItemStack modifyItem(Permissible perm, int slot, ItemStack item) {
-        if (checkHide(perm, slot)) {
+    private ItemStack modifyItem(Player targetPlayer, int slot, ItemStack item) {
+        if (checkHide(targetPlayer, slot)) {
              return new ItemStack(Material.AIR);
         }
         if (plugin.eraseEquipmentsInfo) {
@@ -64,24 +64,9 @@ public class EntityPacketAdapter extends PacketAdapter {
     }
 
     private final String[] slotsName = new String[] { "mainhand", "head", "chest", "legs", "feet", "offhand" };
-    private boolean checkHide(Permissible perm, int slot) {
-        if (perm == null) return false;
-        if (perm.hasPermission("hidemyarmors.hide." + slotsName[slot])) return true;
-        return hasArmorsPerm(perm, slot) || hasHandsPerm(perm, slot);
-    }
-
-    private boolean hasArmorsPerm(Permissible perm, int slot) {
-        return ((slot == ModifierVeryOldPacket.SLOT_HEAD
-                || slot == ModifierVeryOldPacket.SLOT_CHEST
-                || slot == ModifierVeryOldPacket.SLOT_LEGS
-                || slot == ModifierVeryOldPacket.SLOT_FEET)
-                && perm.hasPermission("hidemyarmors.hide.armors"));
-    }
-
-    private boolean hasHandsPerm(Permissible perm, int slot) {
-        return ((slot == ModifierVeryOldPacket.SLOT_HAND
-                || slot == ModifierVeryOldPacket.SLOT_OFF_HAND)
-                && perm.hasPermission("hidemyarmors.hide.hands"));
+    private boolean checkHide(Player targetPlayer, int slot) {
+        if (targetPlayer == null) return false;
+        return plugin.isSlotHidden(targetPlayer, slot);
     }
 
     private ItemStack eraseItemMeta(ItemStack item) {
