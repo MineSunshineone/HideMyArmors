@@ -1,0 +1,9 @@
+name: HideMyArmorsCompatibilityProbe
+version: '1.0'
+main: top.mrxiaom.hidemyarmors.ServerCompatibilityProbe
+api-version: '1.21'
+folia-supported: true
+depend: [HideMyArmors, ProtocolLib]
+commands:
+  hmaprobe:
+    description: Equip test armor on the isolated validation server

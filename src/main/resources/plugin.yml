@@ -1,10 +1,21 @@
 name: HideMyArmors
 version: '${version}'
 main: top.mrxiaom.hidemyarmors.HideMyArmors
-api-version: 1.13
+api-version: '1.21'
 depend: [ ProtocolLib ]
 authors: [ MrXiaoM ]
 folia-supported: true
+permissions:
+  hidemyarmors.hide.armors:
+    default: false
+  hidemyarmors.hide.head:
+    default: false
+  hidemyarmors.hide.chest:
+    default: false
+  hidemyarmors.hide.legs:
+    default: false
+  hidemyarmors.hide.feet:
+    default: false
 commands:
   hidemyarmors:
     description: 管理装备隐藏设置

@@ -2,6 +2,7 @@ package top.mrxiaom.hidemyarmors;
 
 import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.events.ListenerPriority;
+import com.comphenix.protocol.events.ListenerOptions;
 import com.comphenix.protocol.events.PacketAdapter;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
@@ -9,42 +10,36 @@ import de.tr7zw.changeme.nbtapi.*;
 import de.tr7zw.changeme.nbtapi.iface.ReadableNBT;
 import org.bukkit.Color;
 import org.bukkit.Material;
-import org.bukkit.enchantments.Enchantment;
-import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.inventory.meta.SkullMeta;
-import org.bukkit.permissions.Permissible;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.List;
 
 public class EntityPacketAdapter extends PacketAdapter {
     HideMyArmors plugin;
     public EntityPacketAdapter(HideMyArmors plugin) {
-        super(plugin, ListenerPriority.NORMAL, PacketType.Play.Server.ENTITY_EQUIPMENT);
+        super(params().plugin(plugin).listenerPriority(ListenerPriority.NORMAL)
+                .types(PacketType.Play.Server.ENTITY_EQUIPMENT).options(ListenerOptions.ASYNC));
         this.plugin = plugin;
     }
 
     @Override
     public void onPacketSending(PacketEvent event) {
         PacketContainer packet = event.getPacket();
-        Player player = event.getPlayer();
-        if (packet.getType().equals(PacketType.Play.Server.ENTITY_EQUIPMENT)) {
-            List<Player> players = player.getWorld().getPlayers();
-            int entityId = packet.getIntegers().readSafely(0);
-            if (entityId == player.getEntityId()) return;
-            players.removeIf(it -> it.getEntityId() != entityId);
-            Player targetPlayer = players.isEmpty() ? null : players.get(0);
+        Integer entityId = packet.getIntegers().readSafely(0);
+        if (entityId == null || entityId == event.getPlayer().getEntityId()) return;
+        Integer hiddenSlots = plugin.hiddenSlots.get(entityId);
+        if (hiddenSlots == null || (hiddenSlots == 0 && !plugin.eraseEquipmentsInfo)) return;
+        packet = packet.shallowClone();
+        event.setPacket(packet);
 
-            if (plugin.newVersion) {
-                ModifierNewPacket.modify(packet, targetPlayer, this::modifyItem);
-            } else if (plugin.twoHands) {
-                ModifierOldPacket.modify(packet, targetPlayer, this::modifyItem);
-            } else {
-                ModifierVeryOldPacket.modify(packet, targetPlayer, this::modifyItem);
-            }
+        if (plugin.newVersion) {
+            ModifierNewPacket.modify(packet, hiddenSlots, this::modifyItem);
+        } else if (plugin.twoHands) {
+            ModifierOldPacket.modify(packet, hiddenSlots, this::modifyItem);
+        } else {
+            ModifierVeryOldPacket.modify(packet, hiddenSlots, this::modifyItem);
         }
     }
 
@@ -53,20 +48,15 @@ public class EntityPacketAdapter extends PacketAdapter {
     }
 
     @Nullable
-    private ItemStack modifyItem(Player targetPlayer, int slot, ItemStack item) {
-        if (checkHide(targetPlayer, slot)) {
+    private ItemStack modifyItem(int hiddenSlots, int slot, ItemStack item) {
+        if (slot < ModifierVeryOldPacket.SLOT_HEAD || slot > ModifierVeryOldPacket.SLOT_FEET) return null;
+        if ((hiddenSlots & (1 << slot)) != 0) {
              return new ItemStack(Material.AIR);
         }
         if (plugin.eraseEquipmentsInfo) {
             return eraseItemMeta(item);
         }
         return null;
-    }
-
-    private final String[] slotsName = new String[] { "mainhand", "head", "chest", "legs", "feet", "offhand" };
-    private boolean checkHide(Player targetPlayer, int slot) {
-        if (targetPlayer == null) return false;
-        return plugin.isSlotHidden(targetPlayer, slot);
     }
 
     private ItemStack eraseItemMeta(ItemStack item) {
@@ -83,21 +73,25 @@ public class EntityPacketAdapter extends PacketAdapter {
 
         ItemStack newItem = new ItemStack(item.getType(), item.getAmount());
         ItemMeta meta = newItem.getItemMeta();
-        boolean flag = false;
-        if (oldMeta instanceof SkullMeta) {
-            meta = oldMeta;
-            flag = true;
+        if (oldMeta instanceof SkullMeta oldSkull && meta instanceof SkullMeta newSkull) {
+            newSkull.setOwnerProfile(oldSkull.getOwnerProfile());
         }
-        if (!flag && meta != null) {
+        if (meta != null) {
             if (oldMeta instanceof LeatherArmorMeta && meta instanceof LeatherArmorMeta) {
                 Color color = ((LeatherArmorMeta) oldMeta).getColor();
                 ((LeatherArmorMeta) meta).setColor(color);
             }
             if (oldMeta.hasEnchants()) {
-                meta.addEnchant(Enchantment.WATER_WORKER, 1919, true);
+                meta.setEnchantmentGlintOverride(true);
+            }
+            if (oldMeta.hasEnchantmentGlintOverride()) {
+                meta.setEnchantmentGlintOverride(oldMeta.getEnchantmentGlintOverride());
             }
             if (plugin.supportCMD) { // 1.14+
-                CustomModelData.transfer(oldMeta, meta);
+                CustomModelData.transfer(oldMeta, meta, plugin.modelComponents);
+            }
+            if (plugin.itemModels && oldMeta.hasItemModel()) {
+                meta.setItemModel(oldMeta.getItemModel());
             }
         }
         newItem.setItemMeta(meta);

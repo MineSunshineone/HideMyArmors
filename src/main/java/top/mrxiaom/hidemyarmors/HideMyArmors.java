@@ -9,6 +9,11 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
@@ -17,11 +22,19 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-public class HideMyArmors extends JavaPlugin implements TabCompleter {
+public class HideMyArmors extends JavaPlugin implements TabCompleter, Listener {
     ProtocolManager protocolManager;
-    public boolean eraseEquipmentsInfo = false;
+    public volatile boolean eraseEquipmentsInfo = false;
+    protected boolean modelComponents;
+    protected boolean itemModels;
+    // Packet callbacks can run on another player's region or a network thread.
+    final Map<Integer, Integer> hiddenSlots = new ConcurrentHashMap<>();
+    private static final String[] SLOT_NAMES = {"", "head", "chest", "legs", "feet"};
     protected boolean newVersion;
     protected boolean supportCMD;
     protected boolean twoHands;
@@ -52,7 +65,6 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
         keyFeet = new NamespacedKey(this, "hide_feet");
         
         protocolManager = ProtocolLibrary.getProtocolManager();
-        protocolManager.addPacketListener(new EntityPacketAdapter(this));
         com.comphenix.protocol.utility.MinecraftVersion ver = protocolManager.getMinecraftVersion();
         try {
             newVersion = ver.isAtLeast(com.comphenix.protocol.utility.MinecraftVersion.NETHER_UPDATE);
@@ -70,11 +82,46 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
             twoHands = false;
         }
         reloadConfig();
+        modelComponents = ver.isAtLeast(new com.comphenix.protocol.utility.MinecraftVersion("1.21.5"));
+        itemModels = ver.isAtLeast(new com.comphenix.protocol.utility.MinecraftVersion("1.21.2"));
+        getServer().getPluginManager().registerEvents(this, this);
+        getServer().getOnlinePlayers().forEach(this::trackPlayer);
+        protocolManager.addPacketListener(new EntityPacketAdapter(this));
         
         // 注册命令补全
         getCommand("hidemyarmors").setTabCompleter(this);
         
         getLogger().info("HideMyArmors 插件已启用");
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onJoin(PlayerJoinEvent event) {
+        updateHiddenSlots(event.getPlayer());
+        trackPlayer(event.getPlayer());
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        hiddenSlots.remove(event.getPlayer().getEntityId());
+    }
+
+    private void trackPlayer(Player player) {
+        player.getScheduler().runAtFixedRate(this, task -> {
+            if (!isEnabled()) {
+                task.cancel();
+                return;
+            }
+            updateHiddenSlots(player);
+        },
+                () -> hiddenSlots.remove(player.getEntityId()), 1L, 20L);
+    }
+
+    private void updateHiddenSlots(Player player) {
+        int mask = 0;
+        for (int slot = 1; slot < SLOT_NAMES.length; slot++) {
+            if (isSlotHidden(player, slot)) mask |= 1 << slot;
+        }
+        hiddenSlots.put(player.getEntityId(), mask);
     }
 
     @Override
@@ -85,7 +132,7 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
             return true;
         }
         
-        String subCmd = args[0].toLowerCase();
+        String subCmd = args[0].toLowerCase(Locale.ROOT);
         
         if (subCmd.equals("reload")) {
             if (sender.isOp()) {
@@ -111,7 +158,7 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
                 return true;
             }
             
-            String slot = args[1].toLowerCase();
+            String slot = args[1].toLowerCase(Locale.ROOT);
             hideSlot(player, slot);
             return true;
         } else if (subCmd.equals("show")) {
@@ -121,7 +168,7 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
                 return true;
             }
             
-            String slot = args[1].toLowerCase();
+            String slot = args[1].toLowerCase(Locale.ROOT);
             showSlot(player, slot);
             return true;
         } else if (subCmd.equals("status")) {
@@ -143,14 +190,14 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
         if (args.length == 1) {
             // 补全主命令
             return MAIN_COMMANDS.stream()
-                    .filter(cmd -> cmd.startsWith(args[0].toLowerCase()))
+                    .filter(cmd -> cmd.startsWith(args[0].toLowerCase(Locale.ROOT)))
                     .collect(Collectors.toList());
         } else if (args.length == 2) {
-            String subCmd = args[0].toLowerCase();
+            String subCmd = args[0].toLowerCase(Locale.ROOT);
             // 如果是 hide 或 show 命令，补全槽位
             if (subCmd.equals("hide") || subCmd.equals("show")) {
                 return SLOTS.stream()
-                        .filter(slot -> slot.startsWith(args[1].toLowerCase()))
+                        .filter(slot -> slot.startsWith(args[1].toLowerCase(Locale.ROOT)))
                         .collect(Collectors.toList());
             }
         }
@@ -238,21 +285,24 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
         } else {
             player.getPersistentDataContainer().remove(key);
         }
+        updateHiddenSlots(player);
     }
     
     private void showStatus(Player player) {
         player.sendMessage("§6========== 装备隐藏状态 ==========");
-        player.sendMessage("§e头盔: " + (isSlotHidden(player, keyHead) ? "§c隐藏" : "§a显示"));
-        player.sendMessage("§e胸甲: " + (isSlotHidden(player, keyChest) ? "§c隐藏" : "§a显示"));
-        player.sendMessage("§e护腿: " + (isSlotHidden(player, keyLegs) ? "§c隐藏" : "§a显示"));
-        player.sendMessage("§e靴子: " + (isSlotHidden(player, keyFeet) ? "§c隐藏" : "§a显示"));
+        player.sendMessage("§e头盔: " + (isSlotHidden(player, 1) ? "§c隐藏" : "§a显示"));
+        player.sendMessage("§e胸甲: " + (isSlotHidden(player, 2) ? "§c隐藏" : "§a显示"));
+        player.sendMessage("§e护腿: " + (isSlotHidden(player, 3) ? "§c隐藏" : "§a显示"));
+        player.sendMessage("§e靴子: " + (isSlotHidden(player, 4) ? "§c隐藏" : "§a显示"));
         player.sendMessage("§6==================================");
     }
     
     public boolean isSlotHidden(Player player, int slot) {
+        if (slot < 1 || slot >= SLOT_NAMES.length) return false;
         NamespacedKey key = getKeyForSlot(slot);
-        if (key == null) return false;
-        return isSlotHidden(player, key);
+        return (key != null && isSlotHidden(player, key))
+                || player.hasPermission("hidemyarmors.hide." + SLOT_NAMES[slot])
+                || player.hasPermission("hidemyarmors.hide.armors");
     }
     
     private boolean isSlotHidden(Player player, NamespacedKey key) {
@@ -274,6 +324,7 @@ public class HideMyArmors extends JavaPlugin implements TabCompleter {
     @Override
     public void onDisable() {
         if (protocolManager != null) protocolManager.removePacketListeners(this);
+        hiddenSlots.clear();
     }
 
     @Override
